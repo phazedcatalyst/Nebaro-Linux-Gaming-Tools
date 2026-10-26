@@ -1,0 +1,11 @@
+:root { --bg:#0b0e14; --card:#161b26; --accent:#88c0d0; --text:#eceff4; }
+* { box-sizing:border-box; margin:0; }
+html, body { width:1920px; height:1080px; overflow:hidden; background:radial-gradient(circle at 20% 0%, #1b2233, var(--bg)); color:var(--text); font-family:sans-serif; }
+header { display:flex; justify-content:space-between; align-items:center; padding:50px 90px 10px; }
+h1 { font-size:44px; letter-spacing:12px; color:var(--accent); }
+#clock { font-size:44px; }
+.row-title { font-size:30px; margin:40px 90px 16px; opacity:.7; }
+.row { display:flex; gap:28px; padding:20px 90px; }
+.tile { width:280px; height:158px; border-radius:16px; background:var(--card); display:flex; align-items:center; justify-content:center; font-size:30px; font-weight:bold; text-align:center; transition:transform .15s, box-shadow .15s; border:3px solid transparent; }
+.tile.focus { transform:scale(1.12); border-color:var(--accent); box-shadow:0 0 36px rgba(136,192,208,.6); }
+footer { position:absolute; bottom:30px; left:90px; opacity:.4; font-size:22px; }
