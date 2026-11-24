@@ -2,12 +2,25 @@
 
 `tv-cleanup.sh` strips an Android TV television (written for a Skyworth SWTV-20NA on Android TV 11) down to the streaming apps you use, and makes it a bit faster. It runs from your Linux PC over ADB on your home network.
 
+## Windows (PowerShell)
+
+Open PowerShell (not as admin) and run:
+
+```powershell
+mkdir $HOME\tv-cleanup -Force; cd $HOME\tv-cleanup
+iwr https://raw.githubusercontent.com/phazedcatalyst/Nebaro-Linux-Gaming-Tools/claude/new-session-dav8c7/tv-cleanup/tv-cleanup.ps1 -OutFile tv-cleanup.ps1
+powershell -ExecutionPolicy Bypass -File .\tv-cleanup.ps1 192.168.0.69 scan
+powershell -ExecutionPolicy Bypass -File .\tv-cleanup.ps1 192.168.0.69 basic
+```
+
+adb is downloaded automatically from Google the first time. The commands below (`scan`, `basic`, `clean`, `speed`, `restore`) are the same for both versions. On Linux use `./tv-cleanup.sh` instead.
+
 ## One-time setup on the TV
 
 1. **Settings > Device Preferences > About**: click **Android TV OS build** 7 times to unlock Developer options.
 2. **Settings > Device Preferences > Developer options**: turn on **USB debugging**. If you see **Network debugging** or **ADB over network**, turn that on too.
 3. Find the TV's IP in **Settings > Network & Internet** (click your Wi-Fi network).
-4. On the PC, install adb: `sudo pacman -S android-tools`, `sudo dnf install android-tools`, or `sudo apt install adb`.
+4. Linux only: install adb with `sudo pacman -S android-tools`, `sudo dnf install android-tools`, or `sudo apt install adb`.
 
 The first time you connect, the TV shows an "Allow USB debugging?" popup. Tick "Always allow" and choose OK.
 
