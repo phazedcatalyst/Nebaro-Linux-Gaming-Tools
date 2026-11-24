@@ -173,6 +173,11 @@ basic() {
 PROJECTIVY=com.spocky.projengmenu
 HOMELOG="$(dirname "$LOG")/home-${IP}.txt"
 HOME_INTENT=(-a android.intent.action.MAIN -c android.intent.category.HOME)
+# Only real home-screen apps may be hidden. Settings and setup apps also register as
+# "home" (fallback screens) and must never be disabled.
+HOME_SAFE_RE='launcher|leanback'
+HOME_NEVER_RE='settings|setup|tungsten|provision|tvinput|skyworth|coocaa|realtek|rtk|mediatek|mtk|^android$|^com\.android\.tv$'
+hideable_home() { grep -iE "$HOME_SAFE_RE" <<<"$1" | grep -viqE "$HOME_NEVER_RE"; }
 components() { tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -E '^[A-Za-z0-9_.]+/[A-Za-z0-9_.$]+$'; }
 current_home() { a shell cmd package resolve-activity --brief "${HOME_INTENT[@]}" | components | tail -1; }
 all_homes() { a shell cmd package query-activities --brief "${HOME_INTENT[@]}" | components | sort -u; }
@@ -197,6 +202,7 @@ home_lock() {
   echo "Press Home on the remote now. If Projectivy opens, you are done (answer N below)."
   for h in $(all_homes | grep -v "^$PROJECTIVY/"); do
     pkg="${h%%/*}"
+    hideable_home "$pkg" || { echo "   - $pkg is not a launcher (Settings/setup/system), never hidden"; continue; }
     read -rp "   Still getting the old home screen? Hide $pkg? [y/N] " ans
     [[ $ans =~ ^[Yy] ]] || continue
     out="$(a shell pm disable-user --user 0 "$pkg" | tr -d '\r')"

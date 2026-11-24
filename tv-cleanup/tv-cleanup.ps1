@@ -186,6 +186,11 @@ function Do-Basic {
 # -- home screen (launcher) ---------------------------------------------------
 $Projectivy = 'com.spocky.projengmenu'
 $HomeLog = Join-Path $Here "home-$Ip.txt"
+# Only real home-screen apps may be hidden. Settings and setup apps also register as
+# "home" (fallback screens) and must never be disabled.
+$HomeSafeRe = 'launcher|leanback'
+$HomeNeverRe = 'settings|setup|tungsten|provision|tvinput|skyworth|coocaa|realtek|rtk|mediatek|mtk|^android$|^com\.android\.tv$'
+function Hideable-Home($p) { ($p -match $HomeSafeRe) -and ($p -notmatch $HomeNeverRe) }
 $HomeIntent = @('-a', 'android.intent.action.MAIN', '-c', 'android.intent.category.HOME')
 function Components($s) { $s -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^[\w.]+/[\w.$]+$' } }
 function Current-Home { @(Components (A shell cmd package resolve-activity --brief @HomeIntent))[-1] }
@@ -212,6 +217,7 @@ function Do-HomeLock {
     Write-Host 'Press Home on the remote now. If Projectivy opens, you are done (answer N below).'
     foreach ($h in @(All-Homes | Where-Object { $_ -notlike "$Projectivy/*" })) {
         $pkg = $h.Split('/')[0]
+        if (-not (Hideable-Home $pkg)) { Write-Host "   - $pkg is not a launcher (Settings/setup/system), never hidden"; continue }
         $ans = Read-Host "   Still getting the old home screen? Hide $pkg? [y/N]"
         if ($ans -match '^[Yy]') {
             $out = A shell pm disable-user --user 0 $pkg
