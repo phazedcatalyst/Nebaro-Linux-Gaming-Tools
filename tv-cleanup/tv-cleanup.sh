@@ -1,7 +1,7 @@
 #!/bin/bash
 # Debloat + speed up an Android TV television (e.g. Skyworth SWTV-20NA) over ADB.
 #
-# Usage:  ./tv-cleanup.sh <tv-ip> [scan|basic|clean|speed|restore|launcher|home-lock|home-unlock]
+# Usage:  ./tv-cleanup.sh <tv-ip> [scan|basic|clean|speed|restore|launcher|home-lock|home-unlock|boot-scan|shell]
 #   scan     list what's installed that this script knows about (changes nothing)
 #   basic    streaming-only: keep YouTube/Netflix/Disney+/HBO Max/Prime/Apple TV,
 #            Play Store and HDMI inputs; remove the rest; apply speed tweaks
@@ -10,6 +10,8 @@
 #   restore  put back every app this script removed (from the log file)
 #   launcher     show which home screen is active; home-lock / home-unlock
 #                make Projectivy Launcher the home screen, or undo it
+#   boot-scan    read everything about what the TV opens at start-up (changes nothing)
+#   shell "..."  run any adb shell command on the TV
 #
 # Nothing here is permanent: removed apps stay on the system partition and come
 # back with `restore` or a factory reset.
@@ -17,7 +19,7 @@
 set -u
 IP="${1:-}"
 CMD="${2:-scan}"
-[ -z "$IP" ] && { sed -n '4,13p' "$0"; exit 1; }
+[ -z "$IP" ] && { sed -n '4,15p' "$0"; exit 1; }
 command -v adb >/dev/null || { echo "adb not found. Install android-tools (Arch/Fedora) or adb (Debian/Ubuntu)."; exit 1; }
 
 DEV="$IP:5555"
@@ -223,6 +225,27 @@ home_unlock() {
   mv "$HOMELOG" "$HOMELOG.restored"
 }
 
+# ── start-up diagnostics ────────────────────────────────────────────────────
+boot_scan() {
+  local re='boot|power|input|source|hdmi|cec|startup|launcher|home|tvsrc|last' ns out
+  out="$(dirname "$LOG")/boot-scan-${IP}.txt"
+  {
+    echo "== On screen now"
+    a shell dumpsys activity activities | tr -d '\r' | grep -E 'ResumedActivity|mFocusedApp' | sed 's/^[[:space:]]*//'
+    echo "== Home screen: $(current_home)"
+    for ns in global secure system; do
+      echo "== settings $ns (filtered)"
+      a shell settings list "$ns" | tr -d '\r' | grep -iE "$re"
+    done
+    echo "== system properties (filtered)"
+    a shell getprop | tr -d '\r' | grep -iE "$re|skyworth|realtek|rtk"
+    echo "== apps that start at boot (TV/vendor only)"
+    a shell cmd package query-receivers --brief -a android.intent.action.BOOT_COMPLETED | components |
+      grep -iE 'tv|skyworth|coocaa|realtek|rtk|mediatek|mtk|launcher|projengmenu' | sort -u
+  } | tee "$out"
+  echo; echo "Saved to $out - paste it (or this output) to Claude."
+}
+
 restore() {
   [ -f "$LOG" ] || { echo "No log at $LOG — nothing to restore."; exit 0; }
   sort -u "$LOG" | while read -r pkg; do
@@ -237,5 +260,7 @@ connect
 case "$CMD" in
   scan) scan ;; basic) basic ;; clean) clean ;; speed) speed ;; restore) restore ;;
   launcher) launcher ;; home-lock) home_lock ;; home-unlock) home_unlock ;;
+  boot-scan) boot_scan ;;
+  shell) shift 2; a shell "$*" | tr -d '\r' ;;
   *) echo "unknown command: $CMD"; exit 1 ;;
 esac

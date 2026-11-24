@@ -3,7 +3,7 @@ Debloat + speed up an Android TV television (e.g. Skyworth SWTV-20NA) over ADB.
 Windows PowerShell version of tv-cleanup.sh.
 
 Usage:
-  powershell -ExecutionPolicy Bypass -File .\tv-cleanup.ps1 <tv-ip> [scan|basic|clean|speed|restore|launcher|home-lock|home-unlock]
+  powershell -ExecutionPolicy Bypass -File .\tv-cleanup.ps1 <tv-ip> [scan|basic|clean|speed|restore|launcher|home-lock|home-unlock|boot-scan|shell]
 
   scan     list what's installed that this script knows about (changes nothing)
   basic    streaming-only: keep YouTube/Netflix/Disney+/HBO Max/Prime/Apple TV,
@@ -14,6 +14,8 @@ Usage:
   launcher     show which home screen is active and what's installed
   home-lock    make Projectivy Launcher the home screen (reversible)
   home-unlock  undo home-lock
+  boot-scan    read everything about what the TV opens at start-up (changes nothing)
+  shell "..."  run any adb shell command on the TV
 
 Nothing here is permanent: removed apps stay on the system partition and come
 back with `restore` or a factory reset. adb is downloaded from Google next to
@@ -21,10 +23,11 @@ this script if it isn't already installed.
 #>
 param(
     [Parameter(Position = 0)][string]$Ip,
-    [Parameter(Position = 1)][ValidateSet('scan', 'basic', 'clean', 'speed', 'restore', 'launcher', 'home-lock', 'home-unlock')][string]$Cmd = 'scan'
+    [Parameter(Position = 1)][ValidateSet('scan', 'basic', 'clean', 'speed', 'restore', 'launcher', 'home-lock', 'home-unlock', 'boot-scan', 'shell')][string]$Cmd = 'scan',
+    [Parameter(Position = 2, ValueFromRemainingArguments = $true)][string[]]$Rest
 )
 $ErrorActionPreference = 'Continue'   # adb writes normal output to stderr; don't abort on it
-if (-not $Ip) { Write-Host "Usage: .\tv-cleanup.ps1 <tv-ip> [scan|basic|clean|speed|restore|launcher|home-lock|home-unlock]"; exit 1 }
+if (-not $Ip) { Write-Host "Usage: .\tv-cleanup.ps1 <tv-ip> [scan|basic|clean|speed|restore|launcher|home-lock|home-unlock|boot-scan|shell]"; exit 1 }
 
 $Here = Split-Path -Parent $PSCommandPath
 $Dev = "${Ip}:5555"
@@ -242,6 +245,34 @@ function Do-HomeUnlock {
     Move-Item $HomeLog "$HomeLog.restored" -Force
 }
 
+# -- start-up diagnostics -----------------------------------------------------
+function Do-BootScan {
+    $re = 'boot|power|input|source|hdmi|cec|startup|launcher|home|tvsrc|last'
+    $r = New-Object System.Collections.Generic.List[string]
+    $r.Add("== On screen now")
+    $r.AddRange([string[]]@((A shell dumpsys activity activities) -split "`n" | Where-Object { $_ -match 'ResumedActivity|mFocusedApp' } | ForEach-Object { $_.Trim() }))
+    $r.Add("== Home screen: $(Current-Home)")
+    foreach ($ns in 'global', 'secure', 'system') {
+        $r.Add("== settings $ns (filtered)")
+        $r.AddRange([string[]]@((A shell settings list $ns) -split "`n" | Where-Object { $_ -match $re }))
+    }
+    $r.Add("== system properties (filtered)")
+    $r.AddRange([string[]]@((A shell getprop) -split "`n" | Where-Object { $_ -match $re -or $_ -match 'skyworth|realtek|rtk' }))
+    $r.Add("== apps that start at boot (TV/vendor only)")
+    $r.AddRange([string[]]@(Components (A shell cmd package query-receivers --brief -a android.intent.action.BOOT_COMPLETED) |
+        Where-Object { $_ -match 'tv|skyworth|coocaa|realtek|rtk|mediatek|mtk|launcher|projengmenu' } | Sort-Object -Unique))
+    $out = Join-Path $Here "boot-scan-$Ip.txt"
+    $r | Set-Content -Path $out
+    $r | ForEach-Object { Write-Host $_ }
+    Write-Host ""
+    Write-Host "Saved to $out - paste it (or this output) to Claude."
+}
+
+function Do-Shell {
+    if (-not $Rest) { Write-Host 'Usage: .\tv-cleanup.ps1 <tv-ip> shell "command"'; return }
+    Write-Host (A shell ($Rest -join ' '))
+}
+
 function Do-Restore {
     if (-not (Test-Path $Log)) { Write-Host "No log at $Log - nothing to restore."; return }
     Get-Content $Log | Sort-Object -Unique | ForEach-Object {
@@ -262,4 +293,6 @@ switch ($Cmd) {
     'launcher'    { Do-Launcher }
     'home-lock'   { Do-HomeLock }
     'home-unlock' { Do-HomeUnlock }
+    'boot-scan'   { Do-BootScan }
+    'shell'       { Do-Shell }
 }
