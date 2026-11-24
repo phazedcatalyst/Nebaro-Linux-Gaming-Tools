@@ -3,7 +3,7 @@ Debloat + speed up an Android TV television (e.g. Skyworth SWTV-20NA) over ADB.
 Windows PowerShell version of tv-cleanup.sh.
 
 Usage:
-  powershell -ExecutionPolicy Bypass -File .\tv-cleanup.ps1 <tv-ip> [scan|basic|clean|speed|restore]
+  powershell -ExecutionPolicy Bypass -File .\tv-cleanup.ps1 <tv-ip> [scan|basic|clean|speed|restore|launcher|home-lock|home-unlock]
 
   scan     list what's installed that this script knows about (changes nothing)
   basic    streaming-only: keep YouTube/Netflix/Disney+/HBO Max/Prime/Apple TV,
@@ -11,6 +11,9 @@ Usage:
   clean    remove bloat, asking per group
   speed    shorter animations, trim caches, stop background apps
   restore  put back every app this script removed (from the log file)
+  launcher     show which home screen is active and what's installed
+  home-lock    make Projectivy Launcher the home screen (reversible)
+  home-unlock  undo home-lock
 
 Nothing here is permanent: removed apps stay on the system partition and come
 back with `restore` or a factory reset. adb is downloaded from Google next to
@@ -18,10 +21,10 @@ this script if it isn't already installed.
 #>
 param(
     [Parameter(Position = 0)][string]$Ip,
-    [Parameter(Position = 1)][ValidateSet('scan', 'basic', 'clean', 'speed', 'restore')][string]$Cmd = 'scan'
+    [Parameter(Position = 1)][ValidateSet('scan', 'basic', 'clean', 'speed', 'restore', 'launcher', 'home-lock', 'home-unlock')][string]$Cmd = 'scan'
 )
 $ErrorActionPreference = 'Continue'   # adb writes normal output to stderr; don't abort on it
-if (-not $Ip) { Write-Host "Usage: .\tv-cleanup.ps1 <tv-ip> [scan|basic|clean|speed|restore]"; exit 1 }
+if (-not $Ip) { Write-Host "Usage: .\tv-cleanup.ps1 <tv-ip> [scan|basic|clean|speed|restore|launcher|home-lock|home-unlock]"; exit 1 }
 
 $Here = Split-Path -Parent $PSCommandPath
 $Dev = "${Ip}:5555"
@@ -180,6 +183,59 @@ function Do-Basic {
     Write-Host "Removals logged to $Log. Undo with: .\tv-cleanup.ps1 $Ip restore. Now restart the TV."
 }
 
+# -- home screen (launcher) ---------------------------------------------------
+$Projectivy = 'com.spocky.projengmenu'
+$HomeLog = Join-Path $Here "home-$Ip.txt"
+$HomeIntent = @('-a', 'android.intent.action.MAIN', '-c', 'android.intent.category.HOME')
+function Components($s) { $s -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^[\w.]+/[\w.$]+$' } }
+function Current-Home { @(Components (A shell cmd package resolve-activity --brief @HomeIntent))[-1] }
+function All-Homes { Components (A shell cmd package query-activities --brief @HomeIntent) | Sort-Object -Unique }
+
+function Do-Launcher {
+    Write-Host "-- Home screen in use:  $(Current-Home)"
+    Write-Host '-- All installed home screens'
+    All-Homes | ForEach-Object { "   $_" }
+    if (Present $Projectivy) { Write-Host '-- Projectivy: installed' }
+    else { Write-Host '-- Projectivy: NOT installed. Get "Projectivy Launcher" from the Play Store.' }
+    Write-Host '-- Input / source packages (these must keep working)'
+    $script:Installed | Where-Object { $_ -match 'tvinput|^com\.android\.tv$|skyworth|realtek|rtk|mediatek|mtk' } | ForEach-Object { "   $_" }
+}
+
+function Do-HomeLock {
+    if (-not (Present $Projectivy)) { Write-Host 'Install Projectivy Launcher from the Play Store first.'; return }
+    $proj = All-Homes | Where-Object { $_ -like "$Projectivy/*" } | Select-Object -First 1
+    if (-not $proj) { Write-Host "Projectivy is installed but isn't offering a home screen. Open it once, then retry."; return }
+    if (-not (Test-Path $HomeLog)) { Set-Content -Path $HomeLog -Value "home=$(Current-Home)" }
+    Write-Host "-- Making Projectivy the home screen ($proj)"
+    $out = A shell cmd package set-home-activity $proj
+    Write-Host "   $out"
+    Write-Host 'Press Home on the remote now. If Projectivy opens, you are done (answer N below).'
+    foreach ($h in @(All-Homes | Where-Object { $_ -notlike "$Projectivy/*" })) {
+        $pkg = $h.Split('/')[0]
+        $ans = Read-Host "   Still getting the old home screen? Hide $pkg? [y/N]"
+        if ($ans -match '^[Yy]') {
+            $out = A shell pm disable-user --user 0 $pkg
+            if ($out -match 'disabled') { Add-Content -Path $HomeLog -Value "disabled=$pkg"; Write-Host "   OK hidden $pkg" }
+            else { Write-Host "   x $pkg ($out)" }
+        }
+    }
+    Write-Host "Undo any time with: .\tv-cleanup.ps1 $Ip home-unlock"
+}
+
+function Do-HomeUnlock {
+    if (-not (Test-Path $HomeLog)) { Write-Host "No log at $HomeLog - nothing to undo."; return }
+    $lines = Get-Content $HomeLog
+    foreach ($l in $lines) {
+        if ($l -like 'disabled=*') { $p = $l.Substring(9); A shell pm enable $p | Out-Null; Write-Host "   restored $p" }
+    }
+    $orig = ($lines | Where-Object { $_ -like 'home=*' } | Select-Object -First 1)
+    if ($orig -and $orig.Length -gt 5) {
+        A shell cmd package set-home-activity $orig.Substring(5) | Out-Null
+        Write-Host "   home screen set back to $($orig.Substring(5))"
+    }
+    Move-Item $HomeLog "$HomeLog.restored" -Force
+}
+
 function Do-Restore {
     if (-not (Test-Path $Log)) { Write-Host "No log at $Log - nothing to restore."; return }
     Get-Content $Log | Sort-Object -Unique | ForEach-Object {
@@ -197,4 +253,7 @@ switch ($Cmd) {
     'clean'   { Do-Clean }
     'speed'   { Do-Speed }
     'restore' { Do-Restore }
+    'launcher'    { Do-Launcher }
+    'home-lock'   { Do-HomeLock }
+    'home-unlock' { Do-HomeUnlock }
 }

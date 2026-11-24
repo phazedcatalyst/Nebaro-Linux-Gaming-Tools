@@ -38,6 +38,10 @@ The first time you connect, the TV shows an "Allow USB debugging?" popup. Tick "
 
 Restart the TV afterwards (Settings > Device Preferences > About > Restart).
 
+## Simple home screen
+
+See [HOME-SCREEN.md](HOME-SCREEN.md) for replacing the home screen with a two-row layout (apps + sources) using Projectivy Launcher, plus the `launcher`, `home-lock` and `home-unlock` commands.
+
 ## Safety
 
 - Apps are removed only for the current user (`pm uninstall --user 0`). They stay on the system partition, so `restore` or a factory reset brings them back.

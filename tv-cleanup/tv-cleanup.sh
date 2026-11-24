@@ -1,13 +1,15 @@
 #!/bin/bash
 # Debloat + speed up an Android TV television (e.g. Skyworth SWTV-20NA) over ADB.
 #
-# Usage:  ./tv-cleanup.sh <tv-ip> [scan|basic|clean|speed|restore]
+# Usage:  ./tv-cleanup.sh <tv-ip> [scan|basic|clean|speed|restore|launcher|home-lock|home-unlock]
 #   scan     list what's installed that this script knows about (changes nothing)
 #   basic    streaming-only: keep YouTube/Netflix/Disney+/HBO Max/Prime/Apple TV,
 #            Play Store and HDMI inputs; remove the rest; apply speed tweaks
 #   clean    remove bloat, asking per group
 #   speed    shorter animations, trim caches, stop background apps
 #   restore  put back every app this script removed (from the log file)
+#   launcher     show which home screen is active; home-lock / home-unlock
+#                make Projectivy Launcher the home screen, or undo it
 #
 # Nothing here is permanent: removed apps stay on the system partition and come
 # back with `restore` or a factory reset.
@@ -15,7 +17,7 @@
 set -u
 IP="${1:-}"
 CMD="${2:-scan}"
-[ -z "$IP" ] && { sed -n '4,11p' "$0"; exit 1; }
+[ -z "$IP" ] && { sed -n '4,13p' "$0"; exit 1; }
 command -v adb >/dev/null || { echo "adb not found. Install android-tools (Arch/Fedora) or adb (Debian/Ubuntu)."; exit 1; }
 
 DEV="$IP:5555"
@@ -167,6 +169,54 @@ basic() {
   echo "Removals logged to $LOG. Undo with: $0 $IP restore. Now restart the TV."
 }
 
+# ── home screen (launcher) ──────────────────────────────────────────────────
+PROJECTIVY=com.spocky.projengmenu
+HOMELOG="$(dirname "$LOG")/home-${IP}.txt"
+HOME_INTENT=(-a android.intent.action.MAIN -c android.intent.category.HOME)
+components() { tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -E '^[A-Za-z0-9_.]+/[A-Za-z0-9_.$]+$'; }
+current_home() { a shell cmd package resolve-activity --brief "${HOME_INTENT[@]}" | components | tail -1; }
+all_homes() { a shell cmd package query-activities --brief "${HOME_INTENT[@]}" | components | sort -u; }
+
+launcher() {
+  echo "── Home screen in use:  $(current_home)"
+  echo "── All installed home screens"; all_homes | sed 's/^/   /'
+  if present "$PROJECTIVY"; then echo "── Projectivy: installed"
+  else echo "── Projectivy: NOT installed. Get \"Projectivy Launcher\" from the Play Store."; fi
+  echo "── Input / source packages (these must keep working)"
+  grep -iE 'tvinput|^com\.android\.tv$|skyworth|realtek|rtk|mediatek|mtk' <<<"$INSTALLED" | sed 's/^/   /'
+}
+
+home_lock() {
+  local proj h pkg ans out
+  present "$PROJECTIVY" || { echo "Install Projectivy Launcher from the Play Store first."; return; }
+  proj="$(all_homes | grep "^$PROJECTIVY/" | head -1)"
+  [ -z "$proj" ] && { echo "Projectivy is installed but isn't offering a home screen. Open it once, then retry."; return; }
+  [ -f "$HOMELOG" ] || echo "home=$(current_home)" >"$HOMELOG"
+  echo "── Making Projectivy the home screen ($proj)"
+  echo "   $(a shell cmd package set-home-activity "$proj" | tr -d '\r')"
+  echo "Press Home on the remote now. If Projectivy opens, you are done (answer N below)."
+  for h in $(all_homes | grep -v "^$PROJECTIVY/"); do
+    pkg="${h%%/*}"
+    read -rp "   Still getting the old home screen? Hide $pkg? [y/N] " ans
+    [[ $ans =~ ^[Yy] ]] || continue
+    out="$(a shell pm disable-user --user 0 "$pkg" | tr -d '\r')"
+    if grep -q disabled <<<"$out"; then echo "disabled=$pkg" >>"$HOMELOG"; echo "   ✓ hidden $pkg"
+    else echo "   ✗ $pkg ($out)"; fi
+  done
+  echo "Undo any time with: $0 $IP home-unlock"
+}
+
+home_unlock() {
+  local l orig
+  [ -f "$HOMELOG" ] || { echo "No log at $HOMELOG — nothing to undo."; return; }
+  while read -r l; do
+    case "$l" in disabled=*) a shell pm enable "${l#disabled=}" >/dev/null; echo "   ↺ ${l#disabled=}" ;; esac
+  done <"$HOMELOG"
+  orig="$(grep -m1 '^home=' "$HOMELOG" | cut -d= -f2-)"
+  [ -n "$orig" ] && a shell cmd package set-home-activity "$orig" >/dev/null && echo "   home screen set back to $orig"
+  mv "$HOMELOG" "$HOMELOG.restored"
+}
+
 restore() {
   [ -f "$LOG" ] || { echo "No log at $LOG — nothing to restore."; exit 0; }
   sort -u "$LOG" | while read -r pkg; do
@@ -180,5 +230,6 @@ restore() {
 connect
 case "$CMD" in
   scan) scan ;; basic) basic ;; clean) clean ;; speed) speed ;; restore) restore ;;
+  launcher) launcher ;; home-lock) home_lock ;; home-unlock) home_unlock ;;
   *) echo "unknown command: $CMD"; exit 1 ;;
 esac
