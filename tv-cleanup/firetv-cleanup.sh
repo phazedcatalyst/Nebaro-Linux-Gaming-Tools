@@ -1,8 +1,10 @@
 #!/bin/bash
 # Debloat + speed up a Fire TV Edition television (e.g. Skyworth) over ADB.
 #
-# Usage:  ./firetv-cleanup.sh <tv-ip> [scan|clean|speed|restore]
+# Usage:  ./firetv-cleanup.sh <tv-ip> [scan|basic|clean|speed|restore]
 #   scan     list what's installed that this script knows about (changes nothing)
+#   basic    streaming-only: keep YouTube/Netflix/Disney+/HBO Max/Prime/Apple TV,
+#            Appstore and HDMI inputs; remove the rest; apply speed tweaks
 #   clean    remove bloat, asking per group. Removal is per-user and reversible.
 #   speed    shorter animations, trim caches, stop background apps
 #   restore  put back every app this script removed (from the log file)
@@ -13,12 +15,12 @@
 set -u
 IP="${1:-}"
 CMD="${2:-scan}"
-[ -z "$IP" ] && { sed -n '4,9p' "$0"; exit 1; }
+[ -z "$IP" ] && { sed -n '4,11p' "$0"; exit 1; }
 command -v adb >/dev/null || { echo "adb not found. Install android-tools (Arch/Fedora) or adb (Debian/Ubuntu)."; exit 1; }
 
 DEV="$IP:5555"
 LOG="$(cd "$(dirname "$0")" && pwd)/removed-${IP}.txt"
-a() { adb -s "$DEV" "$@"; }
+a() { adb -s "$DEV" "$@" </dev/null; }  # never let adb eat our stdin
 
 # ── package groups: "package|what it is" ────────────────────────────────────
 # Telemetry, ads, tutorials and junk. Nothing you'd notice is gone.
@@ -38,20 +40,31 @@ SAFE=(
   "com.amazon.wifilocker|saves wifi passwords to Amazon"
 )
 # Real features. Only remove what you don't use.
+# (YouTube and Netflix casting are built into those apps and keep working.)
 OPTIONAL=(
   "com.amazon.vizzini|Alexa voice assistant (voice remote button stops working)"
   "com.amazon.alexa.externalmediaplayer.fireos|Alexa music playback"
-  "com.amazon.avod.thirdpartyclient|Prime Video"
-  "com.amazon.firebat|Freevee"
-  "com.amazon.imdb.tv.android.app|Freevee (older name)"
+  "com.amazon.imdb.tv.android.app|Freevee (service shut down)"
   "com.amazon.cloud9|Silk browser"
-  "com.amazon.tv.livetv|Live TV tab"
-  "com.amazon.awvflingreceiver|cast-to-TV receiver"
-  "com.amazon.whisperplay.contentservice|phone casting / Alexa app remote"
+  "com.amazon.awvflingreceiver|Amazon cast-to-TV receiver"
+  "com.amazon.whisperplay.contentservice|Amazon phone casting / Alexa app remote"
   "com.amazon.tv.parentalcontrols|parental controls"
 )
 # Never removed: launcher, settings, Appstore (com.amazon.venezia), keyboard,
-# OTA updater, tcomm. Removing those can leave the TV unusable.
+# OTA updater, tcomm, Live TV / inputs (com.amazon.tv.livetv), Prime Video
+# (com.amazon.firebat, com.amazon.avod*), and any Skyworth/MediaTek package
+# (those drive the HDMI inputs and picture settings).
+
+# Apps `basic` mode keeps and checks for: "name|package [package...]"
+WANTED=(
+  "YouTube|com.amazon.firetv.youtube com.google.android.youtube.tv"
+  "Netflix|com.netflix.ninja"
+  "Disney+|com.disney.disneyplus"
+  "HBO Max|com.hbo.hbonow com.wbd.stream"
+  "Prime Video|com.amazon.firebat com.amazon.avod com.amazon.avod.thirdpartyclient"
+  "Apple TV|com.apple.atve.amazon.appletv"
+)
+wanted_pkg() { local e; for e in "${WANTED[@]}"; do [[ " ${e#*|} " == *" $1 "* ]] && return 0; done; return 1; }
 
 connect() {
   adb connect "$DEV" >/dev/null 2>&1
@@ -118,6 +131,38 @@ speed() {
   echo "   Settings > Preferences > Notification Settings: turn off app notifications"
 }
 
+# Streaming-only profile: keep the WANTED apps, the Appstore and input switching;
+# strip the rest. Only Alexa and your own installed apps are asked about.
+basic() {
+  local e pkg ans
+  echo "── Removing telemetry, ads and Amazon extras"
+  for e in "${SAFE[@]}" "${OPTIONAL[@]}"; do
+    pkg="${e%%|*}"
+    [ "$pkg" = com.amazon.vizzini ] && continue
+    present "$pkg" && remove "$pkg"
+  done
+  if present com.amazon.vizzini; then
+    read -rp "Remove Alexa too? Saves memory, but the remote's voice button stops working. [y/N] " ans
+    [[ $ans =~ ^[Yy] ]] && remove com.amazon.vizzini
+  fi
+  echo "── Other apps you installed (Appstore can reinstall any of them later)"
+  for pkg in $(a shell pm list packages -3 | tr -d '\r' | sed 's/^package://'); do
+    wanted_pkg "$pkg" && continue
+    read -rp "   Uninstall $pkg? [y/N] " ans
+    [[ $ans =~ ^[Yy] ]] && a shell pm uninstall "$pkg" | tr -d '\r' | sed 's/^/     /'
+  done
+  echo "── Speed tweaks"
+  speed
+  echo "── Your apps"
+  INSTALLED="$(a shell pm list packages 2>/dev/null | tr -d '\r' | sed 's/^package://')"
+  for e in "${WANTED[@]}"; do
+    local found=""
+    for pkg in ${e#*|}; do present "$pkg" && found=1; done
+    [ -n "$found" ] && echo "   ✓ ${e%%|*}" || echo "   ✗ ${e%%|*} not installed. Search for it in the Appstore."
+  done
+  echo "Removals logged to $LOG. Undo with: $0 $IP restore. Now restart the TV."
+}
+
 restore() {
   [ -f "$LOG" ] || { echo "No log at $LOG — nothing to restore."; exit 0; }
   sort -u "$LOG" | while read -r pkg; do
@@ -130,6 +175,6 @@ restore() {
 
 connect
 case "$CMD" in
-  scan) scan ;; clean) clean ;; speed) speed ;; restore) restore ;;
+  scan) scan ;; basic) basic ;; clean) clean ;; speed) speed ;; restore) restore ;;
   *) echo "unknown command: $CMD"; exit 1 ;;
 esac

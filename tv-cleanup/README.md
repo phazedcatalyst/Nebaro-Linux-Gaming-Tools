@@ -14,13 +14,16 @@ The first time you connect, the TV shows an "Allow USB debugging?" popup. Tick "
 ## Use
 
 ```bash
+./firetv-cleanup.sh 192.168.0.69 basic    # streaming-only profile (recommended)
 ./firetv-cleanup.sh 192.168.0.69 scan     # see what's there; changes nothing
 ./firetv-cleanup.sh 192.168.0.69 clean    # remove bloat (asks first)
 ./firetv-cleanup.sh 192.168.0.69 speed    # faster animations, clear caches
 ./firetv-cleanup.sh 192.168.0.69 restore  # undo everything clean removed
 ```
 
-Restart the TV after `clean` (hold Select + Play/Pause for 5 seconds).
+`basic` keeps YouTube, Netflix, Disney+, HBO Max, Prime Video, Apple TV, the Appstore and HDMI input switching. It removes telemetry, ads and Amazon extras, asks about Alexa and each app you installed yourself, applies the speed tweaks, then tells you which of the six apps still need installing.
+
+Restart the TV after `basic` or `clean` (hold Select + Play/Pause for 5 seconds).
 
 ## Safety
 
